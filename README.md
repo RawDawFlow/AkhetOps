@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="AkhetOps Logo" width="300"/>
+</p>
+
 # ⚡ AkhetOps
 > Where attack meets defense — The horizon between red and blue.
 
