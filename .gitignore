@@ -1,0 +1,24 @@
+# API Keys and sensitive data
+run_pentest.sh
+run_defense.sh
+run_simulation.sh
+*.env
+.env
+
+# Database files (personal data)
+data/memory/
+data/baselines/
+data/reports/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+pentest-env/
+
+# Logs
+*.log
+*.txt
+!README.md

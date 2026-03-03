@@ -1,0 +1,4 @@
+#!/bin/bash
+source /path/to/pentest-env/bin/activate
+export GROQ_API_KEYS="your-groq-key-1,your-groq-key-2,your-groq-key-3"
+/path/to/pentest-env/bin/python3 /path/to/AkhetOps/simulation/red_vs_blue.py

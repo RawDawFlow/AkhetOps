@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+# core/behavior.py - Behavior Fingerprinting Module
+
+import os
+import json
+import time
+import datetime
+import subprocess
+import hashlib
+import threading
+from tinydb import TinyDB, Query
+
+MEMORY_DIR = os.path.expanduser("~/pentest-ai/data/memory")
+BASELINE_DIR = os.path.expanduser("~/pentest-ai/data/baselines")
+os.makedirs(MEMORY_DIR, exist_ok=True)
+os.makedirs(BASELINE_DIR, exist_ok=True)
+
+behavior_db = TinyDB(os.path.join(MEMORY_DIR, "behavior.json"))
+baseline_table  = behavior_db.table("baselines")
+anomaly_table   = behavior_db.table("anomalies")
+snapshot_table  = behavior_db.table("snapshots")
+
+# ─── Data Collection ──────────────────────────────────────────
+
+def get_running_processes() -> set:
+    """Get current running process names."""
+    try:
+        result = subprocess.run(
+            "ps aux --no-headers | awk '{print $11}'",
+            shell=True, capture_output=True, text=True
+        )
+        return set(result.stdout.strip().splitlines())
+    except:
+        return set()
+
+def get_open_ports() -> set:
+    """Get currently open ports."""
+    try:
+        result = subprocess.run(
+            "netstat -tulpn 2>/dev/null | grep LISTEN | awk '{print $4}' | rev | cut -d: -f1 | rev",
+            shell=True, capture_output=True, text=True
+        )
+        return set(result.stdout.strip().splitlines())
+    except:
+        return set()
+
+def get_active_connections() -> set:
+    """Get active network connections."""
+    try:
+        result = subprocess.run(
+            "netstat -an 2>/dev/null | grep ESTABLISHED | awk '{print $5}'",
+            shell=True, capture_output=True, text=True
+        )
+        return set(result.stdout.strip().splitlines())
+    except:
+        return set()
+
+def get_logged_in_users() -> set:
+    """Get currently logged in users."""
+    try:
+        result = subprocess.run(
+            "who | awk '{print $1}'",
+            shell=True, capture_output=True, text=True
+        )
+        return set(result.stdout.strip().splitlines())
+    except:
+        return set()
+
+def get_cpu_memory_usage() -> dict:
+    """Get current CPU and memory usage."""
+    try:
+        cpu = subprocess.run(
+            "top -bn1 | grep 'Cpu(s)' | awk '{print $2}'",
+            shell=True, capture_output=True, text=True
+        ).stdout.strip()
+        mem = subprocess.run(
+            "free | grep Mem | awk '{print ($3/$2)*100}'",
+            shell=True, capture_output=True, text=True
+        ).stdout.strip()
+        return {
+            "cpu": float(cpu.replace("%us,", "").strip()) if cpu else 0.0,
+            "mem": float(mem) if mem else 0.0
+        }
+    except:
+        return {"cpu": 0.0, "mem": 0.0}
+
+def get_file_hashes(paths: list) -> dict:
+    """Get SHA256 hashes of critical files."""
+    hashes = {}
+    for path in paths:
+        try:
+            with open(path, "rb") as f:
+                hashes[path] = hashlib.sha256(f.read()).hexdigest()
+        except:
+            hashes[path] = None
+    return hashes
+
+def take_snapshot() -> dict:
+    """Take a full system snapshot."""
+    critical_files = [
+        "/etc/passwd", "/etc/shadow", "/etc/sudoers",
+        "/etc/ssh/sshd_config", "/etc/hosts", "/etc/crontab"
+    ]
+    return {
+        "timestamp":   datetime.datetime.now().isoformat(),
+        "processes":   list(get_running_processes()),
+        "ports":       list(get_open_ports()),
+        "connections": list(get_active_connections()),
+        "users":       list(get_logged_in_users()),
+        "resources":   get_cpu_memory_usage(),
+        "file_hashes": get_file_hashes(critical_files)
+    }
+
+# ─── Baseline Management ──────────────────────────────────────
+
+def build_baseline(samples: int = 5, interval: int = 60) -> dict:
+    """
+    Build a behavioral baseline by taking multiple snapshots.
+    samples: number of snapshots to take
+    interval: seconds between snapshots
+    """
+    print(f"\033[94m[*] Building behavioral baseline ({samples} samples, {interval}s apart)...\033[0m")
+    print(f"\033[94m[*] This will take {samples * interval / 60:.1f} minutes.\033[0m")
+
+    snapshots = []
+    for i in range(samples):
+        print(f"\033[94m[*] Taking snapshot {i+1}/{samples}...\033[0m")
+        snapshots.append(take_snapshot())
+        if i < samples - 1:
+            time.sleep(interval)
+
+    # Build baseline from snapshots
+    all_processes   = set()
+    all_ports       = set()
+    cpu_readings    = []
+    mem_readings    = []
+
+    for snap in snapshots:
+        all_processes.update(snap["processes"])
+        all_ports.update(snap["ports"])
+        cpu_readings.append(snap["resources"]["cpu"])
+        mem_readings.append(snap["resources"]["mem"])
+
+    baseline = {
+        "created":          datetime.datetime.now().isoformat(),
+        "normal_processes": list(all_processes),
+        "normal_ports":     list(all_ports),
+        "normal_users":     list(snapshots[-1]["users"]),
+        "file_hashes":      snapshots[-1]["file_hashes"],
+        "cpu_avg":          sum(cpu_readings) / len(cpu_readings),
+        "cpu_max":          max(cpu_readings) * 1.5,  # 50% threshold
+        "mem_avg":          sum(mem_readings) / len(mem_readings),
+        "mem_max":          min(max(mem_readings) * 1.5, 95.0),
+        "sample_count":     samples
+    }
+
+    # Save to DB
+    Base = Query()
+    baseline_table.upsert(
+        {"key": "system_baseline", **baseline},
+        Base.key == "system_baseline"
+    )
+
+    # Save to file as backup
+    with open(os.path.join(BASELINE_DIR, "system_baseline.json"), "w") as f:
+        json.dump(baseline, f, indent=2)
+
+    print(f"\033[92m[+] Baseline built successfully!\033[0m")
+    print(f"\033[92m[+] Normal processes: {len(all_processes)}\033[0m")
+    print(f"\033[92m[+] Normal ports: {list(all_ports)}\033[0m")
+    return baseline
+
+def load_baseline() -> dict:
+    """Load saved baseline."""
+    Base = Query()
+    result = baseline_table.search(Base.key == "system_baseline")
+    if result:
+        return result[0]
+
+    # Try file backup
+    path = os.path.join(BASELINE_DIR, "system_baseline.json")
+    if os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
+    return {}
+
+def baseline_exists() -> bool:
+    return bool(load_baseline())
+
+# ─── Anomaly Detection ────────────────────────────────────────
+
+def detect_anomalies(baseline: dict, current: dict) -> list:
+    """Compare current snapshot to baseline and return anomalies."""
+    anomalies = []
+    now = datetime.datetime.now().isoformat()
+
+    # New processes
+    normal_procs  = set(baseline.get("normal_processes", []))
+    current_procs = set(current.get("processes", []))
+    new_procs     = current_procs - normal_procs
+    suspicious_keywords = [
+        "nc", "netcat", "ncat", "nmap", "metasploit", "msfconsole",
+        "hydra", "john", "hashcat", "sqlmap", "backdoor", "reverse",
+        "shell", "exploit", "payload", "bind", "connect"
+    ]
+    for proc in new_procs:
+        proc_lower = proc.lower()
+        if any(kw in proc_lower for kw in suspicious_keywords):
+            anomalies.append({
+                "type":      "SUSPICIOUS_PROCESS",
+                "severity":  "CRITICAL",
+                "detail":    f"Suspicious process detected: {proc}",
+                "timestamp": now
+            })
+        elif proc not in ["/usr/sbin/sshd", "sshd", "bash", "sh"]:
+            anomalies.append({
+                "type":      "NEW_PROCESS",
+                "severity":  "MEDIUM",
+                "detail":    f"New process not in baseline: {proc}",
+                "timestamp": now
+            })
+
+    # New open ports
+    normal_ports  = set(baseline.get("normal_ports", []))
+    current_ports = set(current.get("ports", []))
+    new_ports     = current_ports - normal_ports
+    dangerous_ports = ["4444", "1337", "31337", "6666", "9999", "8080", "4545"]
+    for port in new_ports:
+        severity = "CRITICAL" if port in dangerous_ports else "HIGH"
+        anomalies.append({
+            "type":      "NEW_PORT",
+            "severity":  severity,
+            "detail":    f"New port opened not in baseline: {port}",
+            "timestamp": now
+        })
+
+    # New users logged in
+    normal_users  = set(baseline.get("normal_users", []))
+    current_users = set(current.get("users", []))
+    new_users     = current_users - normal_users
+    for user in new_users:
+        anomalies.append({
+            "type":      "NEW_USER_LOGIN",
+            "severity":  "HIGH",
+            "detail":    f"New user logged in not seen before: {user}",
+            "timestamp": now
+        })
+
+    # File integrity
+    baseline_hashes = baseline.get("file_hashes", {})
+    current_hashes  = current.get("file_hashes", {})
+    for path, orig_hash in baseline_hashes.items():
+        curr_hash = current_hashes.get(path)
+        if curr_hash and orig_hash and curr_hash != orig_hash:
+            anomalies.append({
+                "type":      "FILE_MODIFIED",
+                "severity":  "CRITICAL",
+                "detail":    f"Critical file modified: {path}",
+                "timestamp": now
+            })
+        elif curr_hash is None and orig_hash:
+            anomalies.append({
+                "type":      "FILE_MISSING",
+                "severity":  "CRITICAL",
+                "detail":    f"Critical file missing: {path}",
+                "timestamp": now
+            })
+
+    # Resource anomalies
+    resources = current.get("resources", {})
+    cpu_max   = baseline.get("cpu_max", 90.0)
+    mem_max   = baseline.get("mem_max", 90.0)
+    if resources.get("cpu", 0) > cpu_max:
+        anomalies.append({
+            "type":      "HIGH_CPU",
+            "severity":  "HIGH",
+            "detail":    f"CPU usage {resources['cpu']:.1f}% exceeds baseline max {cpu_max:.1f}%",
+            "timestamp": now
+        })
+    if resources.get("mem", 0) > mem_max:
+        anomalies.append({
+            "type":      "HIGH_MEMORY",
+            "severity":  "HIGH",
+            "detail":    f"Memory usage {resources['mem']:.1f}% exceeds baseline max {mem_max:.1f}%",
+            "timestamp": now
+        })
+
+    # Save anomalies
+    for anomaly in anomalies:
+        anomaly_table.insert(anomaly)
+
+    return anomalies
+
+def get_recen
