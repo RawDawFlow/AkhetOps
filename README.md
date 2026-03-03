@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/AKHET.png" alt="AkhetOps Logo" width="300"/>
+  <img src="assets/AKHET.png" alt="AkhetOps Logo" width="600"/>
 </p>
 
-# ⚡ AkhetOps
+#   AkhetOps
 > Where attack meets defense — The horizon between red and blue.
 
 AkhetOps is a fully autonomous AI-powered cybersecurity platform combining
@@ -22,7 +22,7 @@ The authors are not responsible for any misuse or damage caused by this tool.
 
 ---
 
-## 🌅 What is AkhetOps?
+##  What is AkhetOps?
 
 In Egyptian mythology, **Akhet** is the horizon — the sacred place where
 the sun meets the darkness, where day meets night, where light meets shadow.
