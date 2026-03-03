@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="AkhetOps Logo" width="300"/>
+  <img src="assets/AKHET.png" alt="AkhetOps Logo" width="300"/>
 </p>
 
 # ⚡ AkhetOps
