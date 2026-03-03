@@ -64,7 +64,7 @@ AkhetOps embodies this duality:
 - Behavior Fingerprinting
 - Attack Prediction Engine
 - Professional Report Generator
-- 5-Key Auto Rotation (500k free tokens/day)
+- 5-Key Auto Rotation (500k free tokens/day) or more !
 
 ---
 
